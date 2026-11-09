@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+<base target="_top">
+<style>
+  *{box-sizing:border-box;font-family:system-ui,sans-serif}
+  body{margin:0;background:#f1f5f9;color:#0f172a}
+  header{background:#1e3a8a;color:#fff;padding:14px 20px;display:flex;gap:10px;align-items:center}
+  header h1{font-size:18px;margin:0 auto 0 0}
+  nav button{background:none;border:0;color:#cbd5e1;font-size:14px;cursor:pointer;padding:6px 10px}
+  nav button.on{color:#fff;border-bottom:2px solid #fff}
+  main{padding:20px;max-width:1100px;margin:auto}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px}
+  .card{background:#fff;border-radius:10px;padding:14px;box-shadow:0 1px 3px #0001}
+  .kpi b{display:block;font-size:24px}
+  table{width:100%;border-collapse:collapse;background:#fff}
+  th,td{padding:8px;border-bottom:1px solid #e2e8f0;text-align:left;font-size:14px}
+  form{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+  input,select{padding:8px;border:1px solid #cbd5e1;border-radius:6px}
+  .btn{background:#2563eb;color:#fff;border:0;border-radius:6px;padding:8px 14px;cursor:pointer}
+  .del{background:#dc2626}
+  .kanban{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+  .col{background:#e2e8f0;border-radius:8px;padding:8px;min-height:200px}
+  .col h3{font-size:13px;margin:4px}
+  .op{background:#fff;border-radius:6px;padding:8px;margin:6px 0;font-size:13px;cursor:grab}
+  .hide{display:none}
+  #msg{position:fixed;bottom:16px;right:16px;background:#0f172a;color:#fff;padding:10px 14px;border-radius:8px;display:none}
+</style>
+</head>
+<body>
+<header><h1>📇 Mini CRM</h1>
+  <nav><button data-v="dash" class="on">Dashboard</button><button data-v="cli">Clientes</button><button data-v="pipe">Pipeline</button><button data-v="act">Actividades</button></nav>
+</header>
+<main>
+  <section id="dash"><div class="kpis" id="kpis"></div></section>
+
+  <section id="cli" class="hide">
+    <form id="fCli" class="card">
+      <input name="nombre" placeholder="Nombre*"><input name="empresa" placeholder="Empresa">
+      <input name="email" placeholder="Email*"><input name="telefono" placeholder="Teléfono">
+      <button class="btn">Agregar cliente</button>
+    </form>
+    <input id="buscar" placeholder="🔍 Buscar cliente..." style="width:100%;margin-bottom:10px">
+    <table><thead><tr><th>Nombre</th><th>Empresa</th><th>Email</th><th>Teléfono</th><th></th></tr></thead><tbody id="tCli"></tbody></table>
+  </section>
+
+  <section id="pipe" class="hide">
+    <form id="fOp" class="card">
+      <select name="cliente_id" class="selCli"></select>
+      <input name="titulo" placeholder="Oportunidad*"><input name="monto" type="number" placeholder="Monto $">
+      <button class="btn">Agregar</button>
+    </form>
+    <div class="kanban" id="kanban"></div>
+  </section>
+
+  <section id="act" class="hide">
+    <form id="fAct" class="card">
+      <select name="cliente_id" class="selCli"></select>
+      <select name="tipo"><option>Llamada</option><option>Email</option><option>Reunión</option></select>
+      <input name="nota" placeholder="Nota" style="flex:1"><button class="btn">Registrar</button>
+    </form>
+    <table><thead><tr><th>Fecha</th><th>Cliente</th><th>Tipo</th><th>Nota</th></tr></thead><tbody id="tAct"></tbody></table>
+  </section>
+</main>
+<div id="msg"></div>
+
+<script>
+let D = {clientes:[],oportunidades:[],actividades:[],etapas:[]};
+const $ = s => document.querySelector(s);
+const api = (fn, ...args) => new Promise((ok, err) =>
+  google.script.run.withSuccessHandler(ok).withFailureHandler(e => { aviso('❌ ' + e.message); err(e); })[fn](...args));
+const aviso = t => { const m=$('#msg'); m.textContent=t; m.style.display='block'; setTimeout(()=>m.style.display='none',2500); };
+const nombreCli = id => (D.clientes.find(c=>c.id===id)||{}).nombre || '—';
+const datosForm = f => Object.fromEntries(new FormData(f));
+
+async function cargar(){ D = await api('getDatos'); render(); }
+
+function render(){
+  const ganado = D.oportunidades.filter(o=>o.etapa==='Ganado').reduce((s,o)=>s+Number(o.monto),0);
+  const abiertas = D.oportunidades.filter(o=>!['Ganado','Perdido'].includes(o.etapa));
+  $('#kpis').innerHTML = [
+    ['Clientes', D.clientes.length], ['Oportunidades abiertas', abiertas.length],
+    ['Pipeline $', abiertas.reduce((s,o)=>s+Number(o.monto),0).toLocaleString()], ['Ganado $', ganado.toLocaleString()]
+  ].map(([t,v])=>`<div class="card kpi">${t}<b>${v}</b></div>`).join('');
+
+  const q = $('#buscar').value.toLowerCase();
+  $('#tCli').innerHTML = D.clientes.filter(c=>JSON.stringify(c).toLowerCase().includes(q)).map(c=>
+    `<tr><td>${c.nombre}</td><td>${c.empresa}</td><td>${c.email}</td><td>${c.telefono}</td>
+     <td><button class="btn del" onclick="borrar('${c.id}')">Eliminar</button></td></tr>`).join('');
+
+  document.querySelectorAll('.selCli').forEach(s => s.innerHTML = D.clientes.map(c=>`<option value="${c.id}">${c.nombre}</option>`).join(''));
+
+  $('#kanban').innerHTML = D.etapas.map(e=>`<div class="col" ondragover="event.preventDefault()" ondrop="soltar(event,'${e}')">
+    <h3>${e}</h3>${D.oportunidades.filter(o=>o.etapa===e).map(o=>
+      `<div class="op" draggable="true" ondragstart="event.dataTransfer.setData('id','${o.id}')">
+       <b>${o.titulo}</b><br>${nombreCli(o.cliente_id)} · $${Number(o.monto).toLocaleString()}</div>`).join('')}</div>`).join('');
+
+  $('#tAct').innerHTML = [...D.actividades].reverse().map(a=>
+    `<tr><td>${a.fecha}</td><td>${nombreCli(a.cliente_id)}</td><td>${a.tipo}</td><td>${a.nota}</td></tr>`).join('');
+}
+
+document.querySelectorAll('nav button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('nav button').forEach(x=>x.classList.remove('on')); b.classList.add('on');
+  document.querySelectorAll('main section').forEach(s=>s.classList.toggle('hide', s.id!==b.dataset.v));
+});
+$('#buscar').oninput = render;
+$('#fCli').onsubmit = async e => { e.preventDefault(); await api('guardarCliente', datosForm(e.target)); e.target.reset(); aviso('✅ Cliente guardado'); cargar(); };
+$('#fOp').onsubmit  = async e => { e.preventDefault(); await api('crearOportunidad', datosForm(e.target)); e.target.reset(); aviso('✅ Oportunidad creada'); cargar(); };
+$('#fAct').onsubmit = async e => { e.preventDefault(); await api('crearActividad', datosForm(e.target)); e.target.reset(); aviso('✅ Actividad registrada'); cargar(); };
+async function borrar(id){ if(confirm('¿Eliminar cliente?')){ await api('eliminarCliente', id); cargar(); } }
+async function soltar(ev, etapa){ const id = ev.dataTransfer.getData('id'); D.oportunidades.find(o=>o.id===id).etapa = etapa; render(); await api('moverEtapa', id, etapa); }
+cargar();
+</script>
+</body>
+</html>
